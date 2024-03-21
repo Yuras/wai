@@ -9,7 +9,7 @@ module Control.Debounce.Internal (
     mkDebounceInternal,
 ) where
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkIO, killThread)
 import Control.Concurrent.MVar (
     MVar,
     takeMVar,
@@ -18,6 +18,7 @@ import Control.Concurrent.MVar (
  )
 import Control.Exception (SomeException, handle, mask_)
 import Control.Monad (forever, void)
+import System.Mem.Weak
 
 -- | Settings to control how debouncing should work.
 --
@@ -85,7 +86,7 @@ trailingEdge = Trailing
 mkDebounceInternal
     :: MVar () -> (Int -> IO ()) -> DebounceSettings -> IO (IO ())
 mkDebounceInternal baton delayFn (DebounceSettings freq action edge) = do
-    mask_ $ void $ forkIO $ forever $ do
+    ti <- mask_ $ forkIO $ forever $ do
         takeMVar baton
         case edge of
             Leading -> do
@@ -96,8 +97,9 @@ mkDebounceInternal baton delayFn (DebounceSettings freq action edge) = do
                 -- Empty the baton of any other activations during the interval
                 void $ tryTakeMVar baton
                 ignoreExc action
-
-    return $ void $ tryPutMVar baton ()
+    let action = void $ tryPutMVar baton ()
+    mkWeak action ti (Just $ killThread ti)
+    return action
 
 ignoreExc :: IO () -> IO ()
 ignoreExc = handle $ \(_ :: SomeException) -> return ()
